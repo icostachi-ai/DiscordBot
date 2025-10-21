@@ -1,89 +1,56 @@
-# discord_only_plus_openai.py
-import os
-import asyncio
-import discord
-from discord.ext import commands
 from dotenv import load_dotenv
+from openai import OpenAI  # OpenAI library
+import discord
+import os
 
-# --- OpenAI client (SDK v1) ---
-# pip install openai>=1.40
-from openai import OpenAI
+# Set OpenAI API key
 load_dotenv()
+OPENAI_KEY = os.getenv('OPENAI_KEY')
+oa_client = OpenAI(api_key=OPENAI_KEY)
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Ask OpenAI to respond like a pirate
+def call_openai(question):
+    try:
+        # Call the OpenAI API with system prompt for pirate style
+        completion = oa_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful pirate assistant. Respond to every query in pirate speak, with 'Arrr!' and nautical flair."},
+                {"role": "user", "content": question}
+            ]
+        )
+        # Extract the response
+        response = completion.choices[0].message.content
+        print(response)
+        return response
+    except Exception as e:
+        error_msg = f"Aye, trouble on the high seas: {str(e)}"
+        print(error_msg)
+        return error_msg
 
-if not DISCORD_TOKEN:
-    raise RuntimeError("Set DISCORD_TOKEN (or TOKEN) in your environment/.env")
-if not OPENAI_API_KEY:
-    raise RuntimeError("Set OPENAI_API_KEY in your environment/.env")
-
-client_oa = OpenAI(api_key=OPENAI_API_KEY)
-
-# --- Discord setup ---
+# Set up intents
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+client = discord.Client(intents=intents)
 
-SYSTEM_PROMPT = (
-    "You are a concise, friendly assistant helping in a Discord server. "
-    "Keep answers short unless the user asks for details."
-)
-
-async def ask_openai(prompt: str) -> str:
-    """Call OpenAI and return the assistant's text."""
-    try:
-        resp = client_oa.chat.completions.create(
-            model="gpt-4o-mini",  # pick a model you have access to
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.5,
-            max_tokens=500,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        # Log and return a friendly message
-        print(f"[OpenAI error] {e}")
-        return "Sorry—I'm having trouble reaching the AI service right now."
-
-@bot.event
+@client.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user} (id: {bot.user.id})")
-    # Sync slash commands globally
-    try:
-        await bot.tree.sync()
-        print("✅ Slash commands synced.")
-    except Exception as e:
-        print(f"⚠️ Slash command sync failed: {e}")
+    print(f"We have logged in as {client.user}")
 
-# --- Slash command: /ask ---
-from discord import app_commands
+@client.event
+async def on_message(message):
+    if message.author == client.user:
+        return
+    if message.content.startswith('$hello'):
+        await message.channel.send('Hello!')
+        print("Sent hello response")
+    if message.content.startswith('$question'):
+        print(f"Message: {message.content}")
+        message_content = message.content.split("$question")[1].strip()  # Split and clean up
+        print(f"Question: {message_content}")
+        response = call_openai(message_content)
+        print(f"Assistant: {response}")
+        print("---")
+        await message.channel.send(response)
 
-@bot.tree.command(name="ask", description="Ask the AI a question")
-@app_commands.describe(prompt="Your question or prompt")
-async def ask(interaction: discord.Interaction, prompt: str):
-    await interaction.response.defer(thinking=True)  # typing indicator
-    reply = await ask_openai(prompt)
-    # Discord message limit ~2000 chars
-    if len(reply) > 1900:
-        reply = reply[:1900] + "…"
-    await interaction.followup.send(reply)
-
-# --- Text command: !ask <prompt> ---
-@bot.command(name="ask")
-async def ask_cmd(ctx: commands.Context, *, prompt: str):
-    async with ctx.typing():
-        reply = await ask_openai(prompt)
-    if len(reply) > 1900:
-        reply = reply[:1900] + "…"
-    await ctx.reply(reply, mention_author=False)
-
-# --- Simple ping ---
-@bot.command(name="ping")
-async def ping(ctx: commands.Context):
-    await ctx.send("pong 🏓")
-
-if __name__ == "__main__":
-    bot.run(DISCORD_TOKEN)
+client.run(os.getenv('TOKEN'))
